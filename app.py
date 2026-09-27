@@ -1,7 +1,9 @@
 import streamlit as st
 from screener import screen_targets, get_sectors
-from ai_engine import generate_ma_rationale, summarize_deal
+from ai_engine import generate_ma_rationale, summarize_deal, client
 from news_tracker import fetch_ma_deals
+from data_wizard import render_data_wizard
+from table_extractor import SUPPORTED_FILE_TYPES, build_excel_workbook, extract_tables
 
 st.set_page_config(
     page_title='AI Finance Platform | Oussama Matrouf',
@@ -15,14 +17,73 @@ st.sidebar.divider()
 
 page = st.sidebar.radio(
     'Navigate to:',
-    ['M&A Target Screener', 'African Deal Tracker', 'About']
+    ['Financial Data Assistant', 'M&A Target Screener', 'African Deal Tracker', 'About']
 )
 
 st.sidebar.divider()
 st.sidebar.caption('Powered by Claude AI (Anthropic)')
 
+# PAGE: FINANCIAL DATA ASSISTANT
+if page == 'Financial Data Assistant':
+    st.title('Financial Data Assistant')
+    request_tab, extract_tab = st.tabs(['Request data', 'Upload & extract tables'])
+
+    with request_tab:
+        st.markdown(
+            'Answer a few guided questions to request Moroccan financial data. '
+            'No free-form typing required unless you choose a custom option.'
+        )
+        st.divider()
+        prompt = render_data_wizard()
+
+        if prompt:
+            with st.spinner('Fetching data from AI...'):
+                message = client.messages.create(
+                    model='claude-sonnet-4-20250514',
+                    max_tokens=1500,
+                    messages=[{'role': 'user', 'content': prompt}]
+                )
+                response = message.content[0].text
+            st.divider()
+            st.subheader('Results')
+            st.markdown(response)
+
+    with extract_tab:
+        st.markdown(
+            'Upload a PDF, CSV, or Excel file. The agent detects its tables and places each '
+            'recognised table in a separate worksheet in an Excel workbook.'
+        )
+        uploaded_file = st.file_uploader(
+            'Choose a file',
+            type=list(SUPPORTED_FILE_TYPES),
+            help='For scanned PDFs, use a version with selectable text or run OCR before uploading.',
+        )
+        if uploaded_file:
+            try:
+                with st.spinner('Recognising tables...'):
+                    tables = extract_tables(uploaded_file.name, uploaded_file.getvalue())
+                if not tables:
+                    st.warning('No tables were detected in this file.')
+                else:
+                    st.success(f'Detected {len(tables)} table(s).')
+                    for index, (table_name, table) in enumerate(tables, start=1):
+                        with st.expander(f'{index}. {table_name} — {len(table)} row(s)', expanded=index == 1):
+                            st.dataframe(table, use_container_width=True, hide_index=True)
+
+                    export_bytes = build_excel_workbook(tables)
+                    export_name = uploaded_file.name.rsplit('.', 1)[0] + '_tables.xlsx'
+                    st.download_button(
+                        'Download Excel workbook',
+                        data=export_bytes,
+                        file_name=export_name,
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        type='primary',
+                    )
+            except Exception as exc:
+                st.error(f'Unable to extract tables: {exc}')
+
 # PAGE 1: M&A SCREENER
-if page == 'M&A Target Screener':
+elif page == 'M&A Target Screener':
     st.title('AI-Powered M&A Target Screener')
     st.markdown('Enter an acquirer profile and AI screens the MASI universe for the best targets.')
     st.divider()
@@ -119,9 +180,11 @@ elif page == 'About':
  | ENCG Casablanca
 
 ### Features
-**1. M&A Target Screener** — Screens the MASI universe with AI-generated acquisition rationales.
+**1. Financial Data Assistant** — Guided wizard to request structured financial data from Moroccan sources.
 
-**2. African Deal Tracker** — Real-time M&A news aggregation and AI deal analysis.
+**2. M&A Target Screener** — Screens the MASI universe with AI-generated acquisition rationales.
+
+**3. African Deal Tracker** — Real-time M&A news aggregation and AI deal analysis.
 
 ### Stack
 Python + Streamlit + Claude AI (Anthropic) + NewsAPI
